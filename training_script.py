@@ -5,6 +5,7 @@ import shutil
 from collections import defaultdict
 
 import matplotlib.pyplot as plt
+
 plt.rc("font", size=8)
 
 import argparse
@@ -20,9 +21,9 @@ from torch.optim.lr_scheduler import StepLR, CyclicLR
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, datasets, models
 
-from dataloader import DummyDataset
+from dataloader import NoisySineDataset, CleanSineDataset
 from models import RNNAutoEncoder
-from data_utils import pad_collate_dummy_2
+from data_utils import pad_collate
 
 # comment out warnings if you are testing it out
 import warnings
@@ -32,57 +33,82 @@ warnings.filterwarnings("ignore")
 parser = argparse.ArgumentParser(description="RNNAutoEncoder")
 
 parser.add_argument(
-    "--save-freq", type=int, default=5, help="every x epochs save weights",
+    "--save-freq",
+    type=int,
+    default=5,
+    help="every x epochs save weights",
 )
 parser.add_argument(
-    "--batch", type=int, default=5, help="train batch size",
+    "--batch",
+    type=int,
+    default=5,
+    help="train batch size",
 )
 parser.add_argument(
-    "--vs", type=float, default=0.05, help="val split",
+    "--vs",
+    type=float,
+    default=0.05,
+    help="val split",
 )
 parser.add_argument(
-    "--lr", type=float, default=0.0001, help="initial lr",
+    "--lr",
+    type=float,
+    default=0.0001,
+    help="initial lr",
 )
 
 args = parser.parse_args()
 
-train_dataset = DummyDataset(reverse =True)
-dataloader = DataLoader(
-    train_dataset,
+clean_dataset = CleanSineDataset()
+noisy_dataset = NoisySineDataset()
+
+noisy_dataloader = DataLoader(
+    noisy_dataset,
     batch_size=10,
     shuffle=True,
     num_workers=0,
     drop_last=True,
-    collate_fn=pad_collate_dummy_2,
+    collate_fn=pad_collate,
 )
 
+clean_dataloader = DataLoader(
+    clean_dataset,
+    batch_size=10,
+    shuffle=True,
+    num_workers=0,
+    drop_last=True,
+    collate_fn=pad_collate,
+)
+
+
 mse_loss = nn.MSELoss()
+
 
 def train_model(model, optimizer, scheduler, num_epochs=25):
     for epoch in range(num_epochs):
         print("Epoch {}/{}".format(epoch, num_epochs - 1))
         print("-" * 10)
 
-        for num, rev, lens in tqdm(dataloader):
-            num = num.to(device)
-            rev = rev.to(device)
+        for ((_, noisy, noisy_lens), (_, clean, clean_lens)) in tqdm(
+            zip(noisy_dataloader, clean_dataloader)
+        ):
+            noisy = noisy.to(device)
+            clean = clean.to(device)
 
             # forward
             optimizer.zero_grad()
 
-            h_n, c_n = model(num, lens)
-            rnn_same, rnn_rev = model.decode(h_n, c_n, int(max(lens)))
+            h_n, c_n = model(noisy, noisy_lens)
+            decoded_clean = model.decode(
+                r_h_n=h_n, r_c_n=c_n, r_max=int(max(clean_lens))
+            )
             # print(num.shape, rnn_output.shape)
-            loss1 = mse_loss(rnn_same, num)
-            loss2 = mse_loss(rnn_rev, rev)
+            loss = mse_loss(clean, decoded_clean)
 
-            loss = loss1 + loss2
             loss.backward()
             optimizer.step()
         print(loss)
-        print(num[0], rnn_same[0])
-        print(rev[0], rnn_rev[0])
-
+        print(clean[0], decoded_clean[0])
 
         # deep copy the model
         # if epoch % args.save_freq == 0:
@@ -93,7 +119,7 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = RNNAutoEncoder(input_dim=1, translation = True).to(device)
+model = RNNAutoEncoder(input_dim=1).to(device)
 # Observe that all parameters are being optimized
 optimizer = optim.Adam(model.parameters(), lr=args.lr)
 scheduler = None

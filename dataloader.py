@@ -12,12 +12,14 @@ class NoisySineDataset(Dataset):
     def __init__(
         self,
         size: int = 1000, 
-        max_chunks: int = 5
+        max_chunks: int = 5,
+        th_format = True
     ):
 
         self.size = size 
         self.max_chunks = max_chunks
-
+        self.th_format = th_format
+        
     def __len__(self):
         return self.size
 
@@ -53,14 +55,20 @@ class NoisySineDataset(Dataset):
         np_x = np.concatenate(x)
         np_y = np.round(np.concatenate(y),3)
 
+        torch_format = lambda x: torch.tensor(x, dtype=torch.float).view(-1, 1)
+        if self.th_format:
+            return torch_format(np_x), torch_format(np_y)
+        
         return np_x, np_y
 
 class CleanSineDataset(Dataset):
     def __init__(
         self,
-        size: int = 1000
+        size: int = 1000,
+        th_format = True,
     ):
         self.size = size
+        self.th_format = th_format
 
     def __len__(self):
         return self.size
@@ -88,6 +96,10 @@ class CleanSineDataset(Dataset):
         np_x = np.concatenate(x)
         np_y = np.concatenate(y)
 
+        torch_format = lambda x: torch.tensor(x, dtype=torch.float).view(-1, 1)
+        if self.th_format:
+            return torch_format(np_x), torch_format(np_y)
+        
         return np_x, np_y
 
 
