@@ -1,5 +1,4 @@
 import random
-import glob
 import os
 import math
 import itertools
@@ -26,7 +25,8 @@ class NoisySineDataset(Dataset):
         return np.random.normal(0, mean, shape)
 
     def get_sine(self, interval):
-        x = np.linspace(interval[0]*np.pi, interval[1]*np.pi, 50)
+        shift_phase = random.randint(0,2)
+        x = np.linspace((shift_phase+interval[0])*np.pi, (shift_phase+interval[1])*np.pi, 50)
         return np.sin(x)
 
     def __getitem__(self, i):
@@ -51,7 +51,7 @@ class NoisySineDataset(Dataset):
                 y.append(self.get_sine(intervals[i]))
 
         np_x = np.concatenate(x)
-        np_y = np.concatenate(y)
+        np_y = np.round(np.concatenate(y),3)
 
         return np_x, np_y
 
@@ -66,7 +66,8 @@ class CleanSineDataset(Dataset):
         return self.size
 
     def get_sine(self, interval):
-        x = np.linspace(interval[0]*np.pi, interval[1]*np.pi, 50)
+        shift_phase = random.randint(0,2)
+        x = np.linspace((shift_phase+interval[0])*np.pi, (shift_phase+interval[1])*np.pi, 50)
         return np.sin(x)
 
     def __getitem__(self, i):
