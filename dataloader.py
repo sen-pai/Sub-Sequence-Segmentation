@@ -103,7 +103,35 @@ class CleanSineDataset(Dataset):
         return np_x, np_y
 
 
+class ReverseDataset(Dataset):
+    def __init__(
+        self,
+        size: int = 1000,
+        th_format = True,
+    ):
+        self.size = size
+        self.th_format = th_format
+
+    def __len__(self):
+        return self.size
+
+    def __getitem__(self, i):
+        correct = np.random.randint(low = 1, high = 20, size=random.randint(2, 20))
+        reverse = correct[::-1]
+        
+        torch_format = lambda x: torch.tensor(x.copy(), dtype=torch.float).view(-1, 1)
+        if self.th_format:
+            return torch_format(correct), torch_format(reverse)
+        
+        return correct, reverse
+
+
 if __name__ == "__main__":
     k = NoisySineDataset()
     for i in range(10):
         next(iter(k))
+    
+    l = ReverseDataset()
+    for i in range(10):
+        c, r = next(iter(l))
+        print(f"c {c}, r {r}")

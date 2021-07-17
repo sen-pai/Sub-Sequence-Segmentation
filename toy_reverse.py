@@ -21,7 +21,7 @@ from torch.optim.lr_scheduler import StepLR, CyclicLR
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, datasets, models
 
-from dataloader import NoisySineDataset, CleanSineDataset
+from dataloader import ReverseDataset
 from models import RNNAutoEncoder
 from data_utils import pad_collate
 
@@ -59,20 +59,10 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-clean_dataset = CleanSineDataset()
-noisy_dataset = NoisySineDataset()
+reverse_dataset = ReverseDataset()
 
 noisy_dataloader = DataLoader(
     noisy_dataset,
-    batch_size=10,
-    shuffle=True,
-    num_workers=0,
-    drop_last=True,
-    collate_fn=pad_collate,
-)
-
-clean_dataloader = DataLoader(
-    clean_dataset,
     batch_size=10,
     shuffle=True,
     num_workers=0,
@@ -98,7 +88,7 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
             # forward
             optimizer.zero_grad()
 
-            _, h_n, c_n = model(noisy, noisy_lens)
+            h_n, c_n = model(noisy, noisy_lens)
             decoded_clean = model.decode(
                 r_h_n=h_n, r_c_n=c_n, r_max=int(max(clean_lens))
             )
@@ -108,7 +98,7 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
             loss.backward()
             optimizer.step()
         print(loss)
-        # print(clean[0], decoded_clean[0])
+        print(clean[0], decoded_clean[0])
 
         # deep copy the model
         # if epoch % args.save_freq == 0:
