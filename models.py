@@ -230,7 +230,7 @@ class RNNDecoder(nn.Module):
         fin_mid_size = int(fin_h_size / 2)
 
         self.reconstruct_linear = nn.Sequential(
-            nn.ReLU(),
+            # nn.ReLU(),
             nn.Linear(fin_h_size*2, fin_mid_size),
             nn.ReLU(),
             nn.Linear(fin_mid_size, output_dim),
@@ -328,39 +328,16 @@ class RNNDecoder(nn.Module):
         first_param = next(self.parameters())
         return first_param.device
 
+class Seq2SeqAttn(nn.Module):
+    def __init__(self, encoder, decoder):
+        super(Seq2SeqAttn, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
 
-class Decoder(nn.Module):
-    def __init__(self, embed_size, hidden_size, output_size, n_layers=1, dropout=0.2):
-        super(Decoder, self).__init__()
-        self.embed_size = embed_size
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-        self.n_layers = n_layers
-
-        self.embed = nn.Embedding(output_size, embed_size)
-        self.dropout = nn.Dropout(dropout, inplace=True)
-        self.attention = Attention(hidden_size)
-        self.gru = nn.GRU(
-            hidden_size + embed_size, hidden_size, n_layers, dropout=dropout
-        )
-        self.out = nn.Linear(hidden_size * 2, output_size)
-
-    def forward(self, input, last_hidden, encoder_outputs):
-        # Get the embedding of the current input word (last output word)
-        embedded = self.embed(input).unsqueeze(0)  # (1,B,N)
-        embedded = self.dropout(embedded)
-        # Calculate attention weights and apply to encoder outputs
-        attn_weights = self.attention(last_hidden[-1], encoder_outputs)
-        context = attn_weights.bmm(encoder_outputs.transpose(0, 1))  # (B,1,N)
-        context = context.transpose(0, 1)  # (1,B,N)
-        # Combine embedded input word and attended context, run through RNN
-        rnn_input = torch.cat([embedded, context], 2)
-        output, hidden = self.gru(rnn_input, last_hidden)
-        output = output.squeeze(0)  # (1,B,N) -> (B,N)
-        context = context.squeeze(0)
-        output = self.out(torch.cat([output, context], 1))
-        # output = F.log_softmax(output, dim=1)
-        return output, hidden, attn_weights
+    def forward(self, input_seq, lens):
+        out, h, c = self.encoder.encode(input_seq, lens)
+        output = self.decoder.decode(h, c, lens, out)
+        return output
 
 
 if __name__ == "__main__":

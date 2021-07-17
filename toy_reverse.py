@@ -22,7 +22,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, datasets, models
 
 from dataloader import ReverseDataset
-from models import RNNAutoEncoder
+from models import RNNEncoder, RNNDecoder, Seq2SeqAttn
 from data_utils import pad_collate
 
 # comment out warnings if you are testing it out
@@ -61,15 +61,14 @@ args = parser.parse_args()
 
 reverse_dataset = ReverseDataset()
 
-noisy_dataloader = DataLoader(
-    noisy_dataset,
-    batch_size=10,
-    shuffle=True,
-    num_workers=0,
-    drop_last=True,
-    collate_fn=pad_collate,
-)
-
+rev_dataloader = DataLoader(
+        reverse_dataset,
+        batch_size=5,
+        shuffle=False,
+        num_workers=0,
+        drop_last=True,
+        collate_fn=pad_collate,
+    )
 
 mse_loss = nn.MSELoss()
 
@@ -79,26 +78,21 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
         print("Epoch {}/{}".format(epoch, num_epochs - 1))
         print("-" * 10)
 
-        for ((_, noisy, noisy_lens), (_, clean, clean_lens)) in tqdm(
-            zip(noisy_dataloader, clean_dataloader)
-        ):
-            noisy = noisy.to(device)
-            clean = clean.to(device)
+        for normal, rev, lens in tqdm(rev_dataloader):
+            normal = normal.to(device)
+            rev = rev.to(device)
 
             # forward
             optimizer.zero_grad()
 
-            h_n, c_n = model(noisy, noisy_lens)
-            decoded_clean = model.decode(
-                r_h_n=h_n, r_c_n=c_n, r_max=int(max(clean_lens))
-            )
-            # print(num.shape, rnn_output.shape)
-            loss = mse_loss(clean, decoded_clean)
+            decoded_rev = model(normal, lens)
+            
+            loss = mse_loss(rev, decoded_rev)
 
             loss.backward()
             optimizer.step()
         print(loss)
-        print(clean[0], decoded_clean[0])
+        print(rev[0], decoded_rev[0])
 
         # deep copy the model
         # if epoch % args.save_freq == 0:
@@ -109,7 +103,10 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = RNNAutoEncoder(input_dim=1).to(device)
+e = RNNEncoder(input_dim=1)
+d= RNNDecoder(input_dim=(e.input_size + e.hidden_size), hidden_size= e.hidden_size)
+
+model = Seq2SeqAttn(encoder=e, decoder=d).to(device)
 # Observe that all parameters are being optimized
 optimizer = optim.Adam(model.parameters(), lr=args.lr)
 scheduler = None

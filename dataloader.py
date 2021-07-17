@@ -116,7 +116,8 @@ class ReverseDataset(Dataset):
         return self.size
 
     def __getitem__(self, i):
-        correct = np.random.randint(low = 1, high = 20, size=random.randint(2, 20))
+        correct = np.random.randint(low = 1, high = 10, size=random.randint(2, 20))
+        correct = correct/10.0
         reverse = correct[::-1]
         
         torch_format = lambda x: torch.tensor(x.copy(), dtype=torch.float).view(-1, 1)
