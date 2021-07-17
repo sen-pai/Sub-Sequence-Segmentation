@@ -197,6 +197,7 @@ class RNNDecoder(nn.Module):
     def __init__(
         self,
         input_dim,
+        output_dim = 1,
         n_layers=1,
         hidden_size=100,
         dropout=0.0,
@@ -205,8 +206,9 @@ class RNNDecoder(nn.Module):
     ):
         super(RNNDecoder, self).__init__()
 
-        self.input_size = input_dim
+        self.input_size = input_dim 
         self.hidden_size = hidden_size
+        self.output_dim = output_dim
         self.layers = n_layers
         self.dropout = dropout
         self.bi = bidirectional
@@ -214,7 +216,7 @@ class RNNDecoder(nn.Module):
 
         self.reconstruct_rnn = nn.LSTM(
             self.input_size,
-            1 if not self.use_r_linear else self.hidden_size,
+            self.output_dim if not self.use_r_linear else self.hidden_size,
             self.layers,
             dropout=self.dropout,
             bidirectional=self.bi,
@@ -229,9 +231,9 @@ class RNNDecoder(nn.Module):
 
         self.reconstruct_linear = nn.Sequential(
             nn.ReLU(),
-            nn.Linear(fin_h_size, fin_mid_size),
+            nn.Linear(fin_h_size*2, fin_mid_size),
             nn.ReLU(),
-            nn.Linear(fin_mid_size, 1),
+            nn.Linear(fin_mid_size, output_dim),
         )
 
     def reconstruct_decode(self, h_n, c_n, max_len):
@@ -249,39 +251,64 @@ class RNNDecoder(nn.Module):
         return final_reconstructed.permute(1, 0, 2)
 
     def single_step_deocde(self, prev_decode_output, encoder_outputs, h_i, c_i):
-        #prev_decoder_output -> [1, batch size, 1]
-
+        # prev_decoder_output -> [1, batch size, 1]
+        # encoder_outputs -> [batch size, max seq len, hidden size]
+        # h_i -> [1, batch size, hidden size]
+        # attention_weights -> [batch size, 1, max seq len]
         attention_weights = self.attention(h_i, encoder_outputs)
-        context = attention_weights.bmm(encoder_outputs.transpose(0, 1))  # (B,1,1)
-        context = context.transpose(0, 1)  # (1,B,1)
+
+        # print("attn weights", attention_weights.shape )
+        # print("encoder outputs ", encoder_outputs.shape)
+        context = attention_weights.bmm(encoder_outputs)  # (B,1,H)
+        # print("bmm context ", context.shape) # batch, 1, hidden
+        context = context.transpose(0, 1)  # (1,B,hidden)
+        # print("context ", context.shape)
+        # print(" cat",torch.cat([prev_decode_output, context], 2).shape )
         # Combine embedded input word and attended context, run through RNN
         rnn_input = torch.cat([prev_decode_output, context], 2)
-        output, hidden = self.reconstruct_rnn(rnn_input, (h_i, c_i))
+        output, (h_n, c_n) = self.reconstruct_rnn(rnn_input, (h_i, c_i))
+
+        # print("h_i ", h_i.shape)
+        # print("h_n ", h_n.shape)
+        # print("rnn output ", output.shape)
         if self.use_r_linear:
-                output = self.reconstruct_linear(output)
-        output = output.squeeze(0)  # (1,B,1) -> (B,1)
-        context = context.squeeze(0)
-        output = self.out(torch.cat([output, context], 1))
-        return output, hidden, attention_weights
+            # output = output.squeeze(0)  # (1,B,H) -> (B,H)
+            
+            output = self.reconstruct_linear(torch.cat([output, context], 2))
+            # output = self.reconstruct_linear(output)
+            # print("rnn output linear", output.shape)
+        # output = output.squeeze(0)  # (1,B,1) -> (B,1)
+        # context = context.squeeze(0)
+        # output = self.out(torch.cat([output, context], 1))
+        return output, h_n, c_n, attention_weights
 
 
-    def decode(self, **kwargs):
+    def decode(self, h_n, c_n, lens, encoder_outputs):
 
         # batch, 2, 100
-        h_n = kwargs["r_h_n"]
-        c_n = kwargs["r_c_n"]
-        max_len = kwargs["r_max"]
+        # h_n = kwargs["r_h_n"]
+        # c_n = kwargs["r_c_n"]
+        max_len = int(max(lens))
 
-        reconstructed = self.reconstruct_decode(h_n, c_n, max_len)
+        self.batch_size = encoder_outputs.size()[0]
 
-        return reconstructed
+        inp = self.dummy_decoder_input(batch_first=False)
+        final_reconstructed = self.dummy_output(max_len, batch_first=False)
+
+        for i in range(max_len):
+            rnn_output, h_n, c_n, attention_weights = self.single_step_deocde(inp, encoder_outputs, h_n, c_n)
+            
+            final_reconstructed[i] = rnn_output
+            inp = rnn_output
+
+        return final_reconstructed.permute(1, 0, 2)
 
     def dummy_decoder_input(self, batch_first=True):
         # forward HAS to be called before decode
         if batch_first:
-            dummy_inp = torch.zeros(self.batch_size, 1, self.input_size)
+            dummy_inp = torch.zeros(self.batch_size, 1, self.output_dim)
         else:
-            dummy_inp = torch.zeros(1, self.batch_size, self.input_size)
+            dummy_inp = torch.zeros(1, self.batch_size, self.output_dim)
 
         return dummy_inp.to(self.device())
 
@@ -336,29 +363,6 @@ class Decoder(nn.Module):
         return output, hidden, attn_weights
 
 
-# class Seq2Seq(nn.Module):
-#     def __init__(self, encoder, decoder):
-#         super(Seq2Seq, self).__init__()
-#         self.encoder = encoder
-#         self.decoder = decoder
-
-#     def forward(self, src, trg, teacher_forcing_ratio=0.5):
-#         batch_size = src.size(1)
-#         max_len = trg.size(0)
-#         vocab_size = self.decoder.output_size
-#         outputs = Variable(torch.zeros(max_len, batch_size, vocab_size)).cuda()
-
-#         encoder_output, hidden = self.encoder(src)
-#         hidden = hidden[: self.decoder.n_layers]
-#         output = Variable(trg.data[0, :])  # sos
-#         for t in range(1, max_len):
-#             output, hidden, attn_weights = self.decoder(output, hidden, encoder_output)
-#             outputs[t] = output
-#             is_teacher = random.random() < teacher_forcing_ratio
-#             top1 = output.data.max(1)[1]
-#             output = Variable(trg.data[t] if is_teacher else top1).cuda()
-#         return outputs
-
 if __name__ == "__main__":
     from dataloader import ReverseDataset
     from data_utils import pad_collate
@@ -368,7 +372,7 @@ if __name__ == "__main__":
 
     k_dataloader = DataLoader(
         k,
-        batch_size=10,
+        batch_size=2,
         shuffle=False,
         num_workers=0,
         drop_last=True,
@@ -376,13 +380,20 @@ if __name__ == "__main__":
     )
 
     e = RNNEncoder(input_dim=1)
-    a = Attention(hidden_size=100)
+    # a = Attention(hidden_size=100)
+    d= RNNDecoder(input_dim=(e.input_size + e.hidden_size), hidden_size= e.hidden_size)
 
     for i, (x, y, lens) in enumerate(k_dataloader):
         out, h, c = e.encode(x, lens)
-        print("encoder out", out.shape)
-        print("encoder h", h.shape)
-        print("encoder c", c.shape)
+        # print("encoder out", out.shape)
+        # print("encoder h", h.shape)
+        # print("encoder c", c.shape)
 
-        attn = a(h, out)
+        # attn = a(h, out)
+
+        output = d.decode(h, c, lens, out)
+
+        print( "y" ,y)
+        print("output ", output)
+
         break
