@@ -47,6 +47,11 @@ class RNNEncoder(nn.Module):
         # encoder_outputs -> [batch size, max seq lenght, hidden size]
         # h_n -> [1, batch size, hidden size]
         # c_n -> [1, batch size, hidden size]
+
+        if self.bi:
+            h_n = h_n.view(1, self.batch_size, self.hidden_size*2)
+            c_n = c_n.view(1, self.batch_size, self.hidden_size*2)
+            
         return encoder_outputs, h_n, c_n
 
     def device(self) -> torch.device:
@@ -162,8 +167,11 @@ class RNNDecoder(BaseDecoder):
             batch_first=False,
         )
 
-        self.attention = Attention(hidden_size)
-
+        if self.bi:
+            self.attention = Attention(hidden_size*2)
+        else:
+            self.attention = Attention(hidden_size)
+        
         fin_h_size = self.hidden_size * 2 if self.bi else self.hidden_size
         fin_mid_size = int(fin_h_size / 2)
         self.reconstruct_linear = nn.Sequential(
@@ -177,13 +185,23 @@ class RNNDecoder(BaseDecoder):
         # encoder_outputs -> [batch size, max seq len, hidden size]
         # h_i -> [1, batch size, hidden size]
         # attention_weights -> [batch size, 1, max seq len]
+        if self.bi:
+            h_i = h_i.view(1, self.batch_size, self.hidden_size*2)
+            c_i = c_i.view(1, self.batch_size, self.hidden_size*2)
 
         attention_weights = self.attention(h_i[-1], encoder_outputs)
+
+        print(attention_weights.shape)
         context = attention_weights.bmm(encoder_outputs)
         # context -> [batch size, 1, hidden]
         context = context.transpose(0, 1)
 
         rnn_input = torch.cat([prev_decode_output, context], 2)
+
+        if self.bi:
+            h_i = h_i.view(2*self.layers, -1, self.hidden_size)
+            c_i = c_i.view(2*self.layers, -1, self.hidden_size)
+            
         output, (h_n, c_n) = self.reconstruct_rnn(rnn_input, (h_i, c_i))
 
         if self.use_r_linear:
@@ -191,16 +209,15 @@ class RNNDecoder(BaseDecoder):
         return output, h_n, c_n, attention_weights
 
     def decode(self, h_n, c_n, lens, encoder_outputs):
-
+        
         max_len = int(max(lens))
-
+        print(max_len)
         self.batch_size = encoder_outputs.size()[0]
 
         inp = self.dummy_decoder_input(batch_first=False)
         final_reconstructed = self.dummy_output(max_len, batch_first=False)
 
         all_attn = torch.zeros(max_len, self.batch_size, max_len).to(self.device())
-
         for i in range(max_len):
             rnn_output, h_n, c_n, attention_weights = self.single_step_deocde(
                 inp, encoder_outputs, h_n, c_n
@@ -291,14 +308,15 @@ class Seq2SeqAttn(nn.Module):
         self.decoder = decoder
         self.attn = attn
 
-    def forward(self, input_seq, lens):
-        out, h, c = self.encoder.encode(input_seq, lens)
+    def forward(self, input_seq, encoder_lens, decoder_lens):
+        out, h, c = self.encoder.encode(input_seq, encoder_lens)
 
         if self.attn:
-            output, all_attn = self.decoder.decode(h, c, lens, out)
+            print(decoder_lens)
+            output, all_attn = self.decoder.decode(h, c, decoder_lens, out)
             return output, all_attn
         else:
-            output = self.decoder.decode(h, c, lens, out)
+            output = self.decoder.decode(h, c, decoder_lens, out)
             return output
 
 
@@ -321,15 +339,18 @@ if __name__ == "__main__":
         collate_fn=pad_collate,
     )
 
-    e = RNNEncoder(input_dim=1)
-    # a = Attention(hidden_size=100)
-    d = RNNDecoder(input_dim=(e.input_size + e.hidden_size), hidden_size=e.hidden_size)
+    e = RNNEncoder(input_dim=1, bidirectional=True)
+    d= RNNDecoder(input_dim=(e.input_size + e.hidden_size*2), hidden_size= e.hidden_size, bidirectional=True)
+
+    # e = RNNEncoder(input_dim=1, bidirectional=False)
+    # d= RNNDecoder(input_dim=(e.input_size + e.hidden_size), hidden_size= e.hidden_size, bidirectional=False)
+    
 
     for i, (x, y, lens) in enumerate(k_dataloader):
         out, h, c = e.encode(x, lens)
-        # print("encoder out", out.shape)
-        # print("encoder h", h.shape)
-        # print("encoder c", c.shape)
+        print("encoder out", out.shape)
+        print("encoder h", h.shape)
+        print("encoder c", c.shape)
 
         # attn = a(h, out)
 

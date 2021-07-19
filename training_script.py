@@ -1,5 +1,6 @@
 import os, sys
 import numpy as np
+import random
 import copy
 import shutil
 from collections import defaultdict
@@ -22,7 +23,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, datasets, models
 
 from dataloader import NoisySineDataset, CleanSineDataset
-from models import RNNAutoEncoder
+from models import RNNEncoder, RNNDecoder, Seq2SeqAttn
 from data_utils import pad_collate
 
 # comment out warnings if you are testing it out
@@ -56,8 +57,26 @@ parser.add_argument(
     default=0.0001,
     help="initial lr",
 )
-
+parser.add_argument(
+    "--exp-name",
+    default="testing_nn_hq",
+    help="Experiment name",
+)
 args = parser.parse_args()
+
+
+import wandb
+
+os.environ["WANDB_NAME"] = args.exp_name
+wandb.init(project="sub_seq")
+wandb.config.update(args)
+wandb.config.update({"dataset": "noisy_sine_dataset"})
+
+
+# fix random seeds
+torch.manual_seed(1)
+np.random.seed(1)
+random.seed(1)
 
 clean_dataset = CleanSineDataset()
 noisy_dataset = NoisySineDataset()
@@ -81,13 +100,34 @@ clean_dataloader = DataLoader(
 )
 
 
-mse_loss = nn.MSELoss()
+def calc_loss(
+    prediction,
+    target,
+    metrics,
+):
+    mse_loss = F.mse_loss(prediction, target)
+    mae_loss = F.l1_loss(prediction, target)
+    metrics["MSE"] += mse_loss.data.cpu().numpy() * target.size(0)
+    metrics["MAE"] += mae_loss.data.cpu().numpy() * target.size(0)
+
+    return mse_loss
+
+
+def print_metrics(metrics, epoch_samples, epoch):
+    outputs = []
+    outputs.append("{}:".format(str(epoch)))
+    for k in metrics.keys():
+        outputs.append("{}: {:4f}".format(k, metrics[k] / epoch_samples))
+        wandb.log({k: metrics[k] / epoch_samples})
+    print("{}".format(", ".join(outputs)))
 
 
 def train_model(model, optimizer, scheduler, num_epochs=25):
     for epoch in range(num_epochs):
         print("Epoch {}/{}".format(epoch, num_epochs - 1))
         print("-" * 10)
+        metrics = defaultdict(float)
+        epoch_samples = 0
 
         for ((_, noisy, noisy_lens), (_, clean, clean_lens)) in tqdm(
             zip(noisy_dataloader, clean_dataloader)
@@ -98,31 +138,38 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
             # forward
             optimizer.zero_grad()
 
-            _, h_n, c_n = model(noisy, noisy_lens)
-            decoded_clean = model.decode(
-                r_h_n=h_n, r_c_n=c_n, r_max=int(max(clean_lens))
-            )
-            # print(num.shape, rnn_output.shape)
-            loss = mse_loss(clean, decoded_clean)
+            decoded_clean, all_attn = model(noisy, encoder_lens = noisy_lens, decoder_lens= clean_lens)
+
+            loss = calc_loss(clean, decoded_clean, metrics)
 
             loss.backward()
             optimizer.step()
-        print(loss)
-        # print(clean[0], decoded_clean[0])
 
+            epoch_samples += noisy.size(0)
+
+        print_metrics(metrics, epoch_samples, epoch)
         # deep copy the model
-        # if epoch % args.save_freq == 0:
-        #     print("saving model")
-        #     best_model_wts = copy.deepcopy(model.state_dict())
-        #     weight_name = "model_weights_" + str(epoch) + ".pt"
-        #     torch.save(best_model_wts, weight_name)
+        if epoch % args.save_freq == 0:
+            print("saving model")
+            best_model_wts = copy.deepcopy(model.state_dict())
+            weight_name = "attn_sin_" + str(epoch) + ".pt"
+            torch.save(best_model_wts, weight_name)
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = RNNAutoEncoder(input_dim=1).to(device)
-# Observe that all parameters are being optimized
+
+
+e = RNNEncoder(input_dim=1, bidirectional=True)
+d = RNNDecoder(
+    input_dim=(e.input_size + e.hidden_size * 2),
+    hidden_size=e.hidden_size,
+    bidirectional=True,
+)
+
+model = Seq2SeqAttn(encoder=e, decoder=d).to(device)
+
 optimizer = optim.Adam(model.parameters(), lr=args.lr)
 scheduler = None
 # if args.schedule:
 #     scheduler = StepLR(optimizer, step_size=5000, gamma=0.1)
-train_model(model, optimizer, scheduler, num_epochs=300)
+train_model(model, optimizer, scheduler, num_epochs=150)

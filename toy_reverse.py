@@ -117,7 +117,7 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
 
             optimizer.zero_grad()
 
-            decoded_rev, all_attn = model(normal, lens)
+            decoded_rev, all_attn = model(normal, lens, lens)
             
             loss = calc_loss(rev, decoded_rev, metrics)
             loss.backward()
@@ -133,13 +133,13 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
         if epoch % args.save_freq == 0:
             print("saving model")
             best_model_wts = copy.deepcopy(model.state_dict())
-            weight_name = "seq2seq_all_attn_weights_" + str(epoch) + ".pt"
+            weight_name = "seq2seq_all_attn_weights_bi_" + str(epoch) + ".pt"
             torch.save(best_model_wts, weight_name)
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-e = RNNEncoder(input_dim=1)
-d= RNNDecoder(input_dim=(e.input_size + e.hidden_size), hidden_size= e.hidden_size)
+e = RNNEncoder(input_dim=1, bidirectional=True)
+d= RNNDecoder(input_dim=(e.input_size + e.hidden_size*2), hidden_size= e.hidden_size, bidirectional=True)
 # d= RNNDecoderNoAttn(input_dim=1, hidden_size= e.hidden_size)
 
 model = Seq2SeqAttn(encoder=e, decoder=d).to(device)
