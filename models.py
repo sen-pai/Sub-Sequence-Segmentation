@@ -191,7 +191,7 @@ class RNNDecoder(BaseDecoder):
 
         attention_weights = self.attention(h_i[-1], encoder_outputs)
 
-        print(attention_weights.shape)
+        # print(attention_weights.shape)
         context = attention_weights.bmm(encoder_outputs)
         # context -> [batch size, 1, hidden]
         context = context.transpose(0, 1)
@@ -211,13 +211,14 @@ class RNNDecoder(BaseDecoder):
     def decode(self, h_n, c_n, lens, encoder_outputs):
         
         max_len = int(max(lens))
-        print(max_len)
+        # print(max_len)
         self.batch_size = encoder_outputs.size()[0]
+        max_encoder_seq_len = encoder_outputs.size()[1]
 
         inp = self.dummy_decoder_input(batch_first=False)
         final_reconstructed = self.dummy_output(max_len, batch_first=False)
 
-        all_attn = torch.zeros(max_len, self.batch_size, max_len).to(self.device())
+        all_attn = torch.zeros(max_len, self.batch_size, max_encoder_seq_len).to(self.device())
         for i in range(max_len):
             rnn_output, h_n, c_n, attention_weights = self.single_step_deocde(
                 inp, encoder_outputs, h_n, c_n
@@ -312,7 +313,7 @@ class Seq2SeqAttn(nn.Module):
         out, h, c = self.encoder.encode(input_seq, encoder_lens)
 
         if self.attn:
-            print(decoder_lens)
+            # print(decoder_lens)
             output, all_attn = self.decoder.decode(h, c, decoder_lens, out)
             return output, all_attn
         else:

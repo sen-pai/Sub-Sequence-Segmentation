@@ -78,7 +78,7 @@ torch.manual_seed(1)
 np.random.seed(1)
 random.seed(1)
 
-clean_dataset = CleanSineDataset()
+clean_dataset = NoisySineDataset()
 noisy_dataset = NoisySineDataset()
 
 noisy_dataloader = DataLoader(
